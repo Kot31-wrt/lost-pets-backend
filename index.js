@@ -5,7 +5,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 const JWT_SECRET = 'SUPER_SECRET_KEY_123'; // Секретный ключ для подписи токенов
 
 app.use(cors());
