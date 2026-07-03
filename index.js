@@ -8,7 +8,9 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = 'SUPER_SECRET_KEY_123'; // Секретный ключ для подписи токенов
 
-app.use(cors());
+app.use(cors({
+    origin: 'https://lost-pets-map.vercel.app'
+}));
 app.use(express.json({ limit: '10mb' })); 
 
 // 🔗 ПОДКЛЮЧЕНИЕ К MONGODB
