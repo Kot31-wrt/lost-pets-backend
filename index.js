@@ -1,40 +1,51 @@
+import 'dotenv/config'; // правильный импорт dotenv для поддержки es-модулей
 import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import axios from 'axios'; // не забудь сделать npm install axios в терминале бэкенда
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = 'SUPER_SECRET_KEY_123'; // Секретный ключ для подписи токенов
+const JWT_SECRET = process.env.JWT_SECRET || 'SUPER_SECRET_KEY_123'; // секретный ключ для подписи токенов
 
 app.use(cors({
     origin: 'https://lost-pets-map.vercel.app'
 }));
 app.use(express.json({ limit: '10mb' })); 
 
-// 🔗 ПОДКЛЮЧЕНИЕ К MONGODB
-const MONGO_URI = 'mongodb+srv://W1NT3R:KotandW1NT3R@cluster0.flimn3e.mongodb.net/lost_pets?retryWrites=true&w=majority&appName=Cluster0';
+// подключение к mongodb через переменную среды из файла .env
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('база данных успешно подключена'))
+  .catch(err => console.error('ошибка подключения к базе:', err));
 
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('🍃 Успешное подключение к MongoDB Atlas!'))
-  .catch(err => console.error('❌ Ошибка подключения к БД:', err));
-
-// 📐 1. СХЕМА ПОЛЬЗОВАТЕЛЯ
+// 1. схема пользователя
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  avatar: { type: String, default: '' }, // Ссылка на фото профиля (base64 или URL)
+  avatar: { type: String, default: '' }, // ссылка на фото профиля (base64 или url)
   phone: { type: String, default: '' },
+  isPhoneVerified: { type: Boolean, default: false }, // статус проверки телефона
   whatsapp: { type: String, default: '' },
   telegram: { type: String, default: '' },
-  bio: { type: String, default: '' } // Пару слов о себе
+  bio: { type: String, default: '' } // пару слов о себе
 }, { timestamps: true });
 
 const User = mongoose.model('User', userSchema);
 
-// 📐 2. СХЕМА ОБЪЯВЛЕНИЯ ПИТОМЦА
+// 2. схема временных смс-кодов (код живет ровно 5 минут и удаляется сам)
+const smsCodeSchema = new mongoose.Schema({
+  phone: { type: String, required: true },
+  code: { type: String, required: true },
+  purpose: { type: String, required: true }, // 'verify_phone' или 'reset_password'
+  createdAt: { type: Date, default: Date.now, expires: 300 } 
+});
+
+const SmsCode = mongoose.model('SmsCode', smsCodeSchema);
+
+// 3. схема объявления питомца
 const petSchema = new mongoose.Schema({
   status: { type: String, required: true }, // потерялся / найден
   name: { type: String, required: true },
@@ -43,77 +54,235 @@ const petSchema = new mongoose.Schema({
   image: { type: String, default: '' },
   lat: { type: Number, required: true },
   lng: { type: Number, required: true },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true } // Ссылка на владельца!
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true } // ссылка на владельца
 }, { timestamps: true });
 
 const Pet = mongoose.model('Pet', petSchema);
 
 
-// 🛰️ МАРШРУТЫ АВТОРИЗАЦИИ
+// маршруты авторизации
 
-// Регистрация нового пользователя
+// регистрация нового пользователя
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
     
-    // Проверяем, есть ли уже такой email в базе
     const candidate = await User.findOne({ email });
     if (candidate) {
-      return res.status(400).json({ success: false, message: 'Пользователь с таким Email уже существует' });
+      return res.status(400).json({ success: false, message: 'пользователь с таким email уже существует' });
     }
 
-    // Хешируем (шифруем) пароль
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Сохраняем в MongoDB
     const user = new User({ name, email, password: hashedPassword });
     await user.save();
 
-    res.status(201).json({ success: true, message: 'Пользователь успешно зарегистрирован!' });
+    res.status(201).json({ success: true, message: 'пользователь успешно зарегистрирован!' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Ошибка при регистрации' });
+    res.status(500).json({ success: false, message: 'ошибка при регистрации' });
   }
 });
 
-// Вход в аккаунт
+// вход в аккаунт
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Ищем пользователя по email
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(400).json({ success: false, message: 'Неверный email или password' });
+      return res.status(400).json({ success: false, message: 'неверный email или password' });
     }
 
-    // Проверяем пароль
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(400).json({ success: false, message: 'Неверный email или password' });
+      return res.status(400).json({ success: false, message: 'неверный email или password' });
     }
 
-    // Создаем JWT токен (действует 1 час)
+    // исправлено: берем jwt_secret из настроек выше
     const token = jwt.sign(
       { userId: user._id, name: user.name, email: user.email },
       JWT_SECRET,
       { expiresIn: '1h' }
     );
 
-    res.json({ success: true, token, user: { id: user._id, name: user.name, email: user.email } });
+    // возвращаем полные данные пользователя, включая телефон и соцсети для личного кабинета
+    res.json({ 
+      success: true, 
+      token, 
+      user: { 
+        id: user._id, 
+        name: user.name, 
+        email: user.email,
+        phone: user.phone,
+        isPhoneVerified: user.isPhoneVerified,
+        whatsapp: user.whatsapp,
+        telegram: user.telegram,
+        bio: user.bio,
+        avatar: user.avatar
+      } 
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Ошибка при входе' });
+    res.status(500).json({ success: false, message: 'ошибка при входе' });
   }
 });
 
 
-// 🛰️ МАРШРУТЫ ОБЪЯВЛЕНИЙ
+// маршруты профиля и смс-верификации
+
+// 1. запрос смс-кода для подтверждения телефона в личном кабинете
+app.post('/api/users/send-phone-code', async (req, res) => {
+  try {
+    const { phone, userId } = req.body;
+
+    if (!phone || !userId) {
+      return res.status(400).json({ success: false, message: 'номер телефона и id пользователя обязательны' });
+    }
+
+    // проверка: не занят ли номер другим аккаунтом
+    const existingUser = await User.findOne({ phone, _id: { $ne: userId } });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: 'этот номер телефона уже привязан к другому аккаунту' });
+    }
+
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+
+    await SmsCode.deleteMany({ phone, purpose: 'verify_phone' });
+    await SmsCode.create({ phone, code, purpose: 'verify_phone' });
+
+    const smsUrl = `https://sms.ru/sms/send?api_id=${process.env.SMS_RU_API_ID}&to=${phone}&msg=${encodeURIComponent(`код подтверждения профиля: ${code}`)}&json=1`;
+    const response = await axios.get(smsUrl);
+
+    if (response.data && response.data.status === "OK") {
+      res.json({ success: true, message: 'смс-код успешно отправлен' });
+    } else {
+      console.log(`[режим тестирования] смс не отправлено, код для ${phone}: ${code}`);
+      res.json({ success: true, message: 'код сгенерирован (тест-режим)', testCode: code });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'ошибка при отправке смс' });
+  }
+});
+
+// 2. проверка смс-кода и полное сохранение профиля из личного кабинета
+app.post('/api/users/update-profile', async (req, res) => {
+  try {
+    const { userId, name, phone, code, whatsapp, telegram, bio, avatar } = req.body;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'пользователь не найден' });
+    }
+
+    let phoneVerifiedStatus = user.isPhoneVerified;
+
+    // если пользователь меняет телефон или подтверждает его заново
+    if (phone && phone !== user.phone) {
+      if (!code) {
+        return res.status(400).json({ success: false, message: 'необходимо ввести смс-код для подтверждения нового номера' });
+      }
+
+      const validCode = await SmsCode.findOne({ phone, code, purpose: 'verify_phone' });
+      if (!validCode) {
+        return res.status(400).json({ success: false, message: 'неверный или просроченный код подтверждения' });
+      }
+
+      phoneVerifiedStatus = true;
+      await SmsCode.deleteOne({ _id: validCode._id });
+    }
+
+    // обновляем все поля профиля
+    user.name = name || user.name;
+    user.phone = phone || user.phone;
+    user.isPhoneVerified = phoneVerifiedStatus;
+    user.whatsapp = whatsapp !== undefined ? whatsapp : user.whatsapp;
+    user.telegram = telegram !== undefined ? telegram : user.telegram;
+    user.bio = bio !== undefined ? bio : user.bio;
+    user.avatar = avatar !== undefined ? avatar : user.avatar;
+
+    await user.save();
+
+    res.json({ 
+      success: true, 
+      message: 'профиль успешно обновлен', 
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        isPhoneVerified: user.isPhoneVerified,
+        whatsapp: user.whatsapp,
+        telegram: user.telegram,
+        bio: user.bio,
+        avatar: user.avatar
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'ошибка при обновлении профиля' });
+  }
+});
+
+// 3. запрос смс-кода для сброса и восстановления пароля
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { phone } = req.body;
+
+    const user = await User.findOne({ phone });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'пользователь с таким номером телефона не найден' });
+    }
+
+    const code = Math.floor(1000 + Math.random() * 9000).toString();
+
+    await SmsCode.deleteMany({ phone, purpose: 'reset_password' });
+    await SmsCode.create({ phone, code, purpose: 'reset_password' });
+
+    const smsUrl = `https://sms.ru/sms/send?api_id=${process.env.SMS_RU_API_ID}&to=${phone}&msg=${encodeURIComponent(`код сброса пароля: ${code}`)}&json=1`;
+    const response = await axios.get(smsUrl);
+
+    if (response.data && response.data.status === "OK") {
+      res.json({ success: true, message: 'смс с кодом сброса отправлено' });
+    } else {
+      console.log(`[режим тестирования] код сброса пароля для ${phone}: ${code}`);
+      res.json({ success: true, message: 'код сброса сгенерирован (тест-режим)', testCode: code });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'ошибка сервера' });
+  }
+});
+
+// 4. установка нового пароля по смс-коду
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { phone, code, newPassword } = req.body;
+
+    const validCode = await SmsCode.findOne({ phone, code, purpose: 'reset_password' });
+    if (!validCode) {
+      return res.status(400).json({ success: false, message: 'неверный или просроченный код сброса' });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await User.findOneAndUpdate({ phone }, { password: hashedPassword });
+    await SmsCode.deleteOne({ _id: validCode._id });
+
+    res.json({ success: true, message: 'пароль успешно изменен, теперь вы можете войти в аккаунт' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: 'ошибка при сбросе пароля' });
+  }
+});
+
+
+// маршруты объявлений
 
 app.get('/api/pets', async (req, res) => {
   try {
     const pets = await Pet.find().sort({ createdAt: -1 });
     res.json(pets);
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Ошибка загрузки данных' });
+    res.status(500).json({ success: false, message: 'ошибка загрузки данных' });
   }
 });
 
@@ -121,9 +290,9 @@ app.post('/api/pets', async (req, res) => {
   try {
     const newPet = new Pet(req.body);
     await newPet.save();
-    res.status(201).json({ success: true, message: 'Объявление сохранено!' });
+    res.status(201).json({ success: true, message: 'объявление сохранено!' });
   } catch (error) {
-    res.status(400).json({ success: false, message: 'Ошибка сохранения' });
+    res.status(400).json({ success: false, message: 'ошибка сохранения' });
   }
 });
 
@@ -132,38 +301,35 @@ app.get('/api/pets/user/:userId', async (req, res) => {
     const userPets = await Pet.find({ userId: req.params.userId }).sort({ createdAt: -1 });
     res.json(userPets);
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Ошибка получения объявлений' });
+    res.status(500).json({ success: false, message: 'ошибка получения объявлений' });
   }
 });
 
 app.delete('/api/pets/:id', async (req, res) => {
   try {
     await Pet.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: 'Удалено!' });
+    res.json({ success: true, message: 'удалено!' });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Ошибка удаления' });
+    res.status(500).json({ success: false, message: 'ошибка удаления' });
   }
 });
 
-// Роут для получения публичного профиля любого пользователя и его объявлений
 app.get('/api/users/:id', async (req, res) => {
   try {
-    // Находим пользователя по ID, исключая пароль из выдачи (.select('-password'))
-    const user = await mongoose.model('User').findById(req.params.id).select('-password');
+    const user = await User.findById(req.params.id).select('-password');
     if (!user) {
-      return res.status(404).json({ success: false, message: 'Пользователь не найден' });
+      return res.status(404).json({ success: false, message: 'пользователь не найден' });
     }
 
-    // Находим все объявления, которые создал этот пользователь
-    const ads = await mongoose.model('Pet').find({ userId: req.params.id }).sort({ createdAt: -1 });
+    const ads = await Pet.find({ userId: req.params.id }).sort({ createdAt: -1 });
 
     res.json({ success: true, user, ads });
   } catch (error) {
-    console.error('Ошибка при получении профиля:', error);
-    res.status(500).json({ success: false, message: 'Ошибка сервера' });
+    console.error('ошибка при получении профиля:', error);
+    res.status(500).json({ success: false, message: 'ошибка сервера' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Бэкенд с авторизацией запущен на http://localhost:${PORT}`);
+  console.log(`бэкенд с авторизацией и смс запущен на http://localhost:${PORT}`);
 });
