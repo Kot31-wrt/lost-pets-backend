@@ -4,7 +4,7 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import axios from 'axios'; // не забудь сделать npm install axios в терминале бэкенда
+import axios from 'axios'; 
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -35,12 +35,12 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
-// 2. схема временных смс-кодов (код живет ровно 5 минут и удаляется сам)
+// 2. схема временных смс-кодов (ошибка со строкой require убрана)
 const smsCodeSchema = new mongoose.Schema({
   phone: { type: String, required: true },
   code: { type: String, required: true },
   purpose: { type: String, required: true }, // 'verify_phone' или 'reset_password'
-  createdAt: { type: Date, default: Date.now, expires: 300 } 
+  createdAt: { type: Date, default: Date.now, expires: 300 } // удалится само через 5 минут
 });
 
 const SmsCode = mongoose.model('SmsCode', smsCodeSchema);
@@ -98,14 +98,12 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ success: false, message: 'неверный email или password' });
     }
 
-    // исправлено: берем jwt_secret из настроек выше
     const token = jwt.sign(
       { userId: user._id, name: user.name, email: user.email },
       JWT_SECRET,
       { expiresIn: '1h' }
     );
 
-    // возвращаем полные данные пользователя, включая телефон и соцсети для личного кабинета
     res.json({ 
       success: true, 
       token, 
@@ -138,7 +136,6 @@ app.post('/api/users/send-phone-code', async (req, res) => {
       return res.status(400).json({ success: false, message: 'номер телефона и id пользователя обязательны' });
     }
 
-    // проверка: не занят ли номер другим аккаунтом
     const existingUser = await User.findOne({ phone, _id: { $ne: userId } });
     if (existingUser) {
       return res.status(400).json({ success: false, message: 'этот номер телефона уже привязан к другому аккаунту' });
@@ -176,7 +173,6 @@ app.post('/api/users/update-profile', async (req, res) => {
 
     let phoneVerifiedStatus = user.isPhoneVerified;
 
-    // если пользователь меняет телефон или подтверждает его заново
     if (phone && phone !== user.phone) {
       if (!code) {
         return res.status(400).json({ success: false, message: 'необходимо ввести смс-код для подтверждения нового номера' });
@@ -191,7 +187,6 @@ app.post('/api/users/update-profile', async (req, res) => {
       await SmsCode.deleteOne({ _id: validCode._id });
     }
 
-    // обновляем все поля профиля
     user.name = name || user.name;
     user.phone = phone || user.phone;
     user.isPhoneVerified = phoneVerifiedStatus;
