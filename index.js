@@ -165,32 +165,21 @@ app.post('/api/users/send-phone-code', async (req, res) => {
 app.put('/api/users/profile/:id', async (req, res) => {
   try {
     const userId = req.params.id;
-    const { name, phone, code, whatsapp, telegram, bio, avatar } = req.body;
+    const { name, phone, whatsapp, telegram, bio, avatar } = req.body;
 
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'пользователь не найден' });
     }
 
-    let phoneVerifiedStatus = user.isPhoneVerified;
-
-    if (phone && phone !== user.phone) {
-      if (!code) {
-        return res.status(400).json({ success: false, message: 'необходимо ввести смс-код для подтверждения нового номера' });
-      }
-
-      const validCode = await SmsCode.findOne({ phone, code, purpose: 'verify_phone' });
-      if (!validCode) {
-        return res.status(400).json({ success: false, message: 'неверный или просроченный код подтверждения' });
-      }
-
-      phoneVerifiedStatus = true;
-      await SmsCode.deleteOne({ _id: validCode._id });
+    // Если пользователь ввел новый номер, который отличается от старого в базе,
+    // сбрасываем флаг верификации в false, так как этот новый номер еще не подтвержден
+    if (phone !== undefined && phone !== user.phone) {
+      user.phone = phone;
+      user.isPhoneVerified = false; 
     }
 
     user.name = name || user.name;
-    user.phone = phone || user.phone;
-    user.isPhoneVerified = phoneVerifiedStatus;
     user.whatsapp = whatsapp !== undefined ? whatsapp : user.whatsapp;
     user.telegram = telegram !== undefined ? telegram : user.telegram;
     user.bio = bio !== undefined ? bio : user.bio;
@@ -219,33 +208,51 @@ app.put('/api/users/profile/:id', async (req, res) => {
   }
 });
 
-// 3. запрос смс-кода для сброса и восстановления пароля
-app.post('/api/auth/forgot-password', async (req, res) => {
+// НОВЫЙ МАРШРУТ: ОТДЕЛЬНАЯ ПРОВЕРКА СМС ДЛЯ ПОДТВЕРЖДЕНИЯ НОМЕРА
+app.post('/api/users/verify-phone-code', async (req, res) => {
   try {
-    const { phone } = req.body;
+    const { userId, phone, code } = req.body;
 
-    const user = await User.findOne({ phone });
+    if (!phone || !code || !userId) {
+      return res.status(400).json({ success: false, message: 'Все поля обязательны для верификации' });
+    }
+
+    const validCode = await SmsCode.findOne({ phone, code, purpose: 'verify_phone' });
+    if (!validCode) {
+      return res.status(400).json({ success: false, message: 'Неверный или просроченный код подтверждения' });
+    }
+
+    // Если код верный, находим пользователя и подтверждаем ему номер
+    const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ success: false, message: 'пользователь с таким номером телефона не найден' });
+      return res.status(404).json({ success: false, message: 'Пользователь не найден' });
     }
 
-    const code = Math.floor(1000 + Math.random() * 9000).toString();
+    user.phone = phone;
+    user.isPhoneVerified = true;
+    await user.save();
 
-    await SmsCode.deleteMany({ phone, purpose: 'reset_password' });
-    await SmsCode.create({ phone, code, purpose: 'reset_password' });
+    // Удаляем использованный код
+    await SmsCode.deleteOne({ _id: validCode._id });
 
-    const smsUrl = `https://sms.ru/sms/send?api_id=${process.env.SMS_RU_API_ID}&to=${phone}&msg=${encodeURIComponent(`код сброса пароля: ${code}`)}&json=1`;
-    const response = await axios.get(smsUrl);
-
-    if (response.data && response.data.status === "OK") {
-      res.json({ success: true, message: 'смс с кодом сброса отправлено' });
-    } else {
-      console.log(`[режим тестирования] код сброса пароля для ${phone}: ${code}`);
-      res.json({ success: true, message: 'код сброса сгенерирован (тест-режим)', testCode: code });
-    }
+    res.json({
+      success: true,
+      message: 'Номер телефона успешно подтвержден!',
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        isPhoneVerified: user.isPhoneVerified,
+        whatsapp: user.whatsapp,
+        telegram: user.telegram,
+        bio: user.bio,
+        avatar: user.avatar
+      }
+    });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ success: false, message: 'ошибка сервера' });
+    res.status(500).json({ success: false, message: 'Ошибка сервера при верификации' });
   }
 });
 
