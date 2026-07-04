@@ -25,17 +25,17 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  avatar: { type: String, default: '' }, // ссылка на фото профиля (base64 или url)
   phone: { type: String, default: '' },
-  isPhoneVerified: { type: Boolean, default: false }, // статус проверки телефона
+  isPhoneVerified: { type: Boolean, default: false },
   whatsapp: { type: String, default: '' },
   telegram: { type: String, default: '' },
-  bio: { type: String, default: '' } // пару слов о себе
-}, { timestamps: true });
+  bio: { type: String, default: '' },
+  avatar: { type: String, default: '' }
+});
 
 const User = mongoose.model('User', userSchema);
 
-// 2. схема временных смс-кодов (ошибка со строкой require убрана)
+// 2. схема временных смс-кодов
 const smsCodeSchema = new mongoose.Schema({
   phone: { type: String, required: true },
   code: { type: String, required: true },
@@ -60,9 +60,9 @@ const petSchema = new mongoose.Schema({
 const Pet = mongoose.model('Pet', petSchema);
 
 
-// маршруты авторизации
+// ================= МАРШРУТЫ АВТОРИЗАЦИИ =================
 
-// регистрация нового пользователя
+// Регистрация нового пользователя
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -83,7 +83,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// вход в аккаунт
+// Вход в аккаунт
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -125,9 +125,9 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 
-// маршруты профиля и смс-верификации
+// ================= МАРШРУТЫ ПРОФИЛЯ И СМС =================
 
-// 1. запрос смс-кода для подтверждения телефона в личном кабинете
+// 1. Запрос смс-кода для подтверждения телефона в личном кабинете
 app.post('/api/users/send-phone-code', async (req, res) => {
   try {
     const { phone, userId } = req.body;
@@ -161,10 +161,11 @@ app.post('/api/users/send-phone-code', async (req, res) => {
   }
 });
 
-// 2. проверка смс-кода и полное сохранение профиля из личного кабинета
-app.post('/api/users/update-profile', async (req, res) => {
+// 2. Обновление профиля (совместимый с фронтендом PUT маршрут)
+app.put('/api/users/profile/:id', async (req, res) => {
   try {
-    const { userId, name, phone, code, whatsapp, telegram, bio, avatar } = req.body;
+    const userId = req.params.id;
+    const { name, phone, code, whatsapp, telegram, bio, avatar } = req.body;
 
     const user = await User.findById(userId);
     if (!user) {
@@ -270,7 +271,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 });
 
 
-// маршруты объявлений
+// ================= МАРШРУТЫ ОБЪЯВЛЕНИЙ =================
 
 app.get('/api/pets', async (req, res) => {
   try {
@@ -309,6 +310,7 @@ app.delete('/api/pets/:id', async (req, res) => {
   }
 });
 
+// Получение публичной карточки пользователя со всеми его соцсетями и объявлениями
 app.get('/api/users/:id', async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select('-password');
