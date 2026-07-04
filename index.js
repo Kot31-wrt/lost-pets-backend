@@ -61,9 +61,9 @@ const petSchema = new mongoose.Schema({
 const Pet = mongoose.model('Pet', petSchema);
 
 
-// ================= МАРШРУТЫ АВТОРИЗАЦИИ =================
+// маршруты авторизации и регистрации
 
-// Регистрация нового пользователя
+// регистрация нового пользователя
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -84,7 +84,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// Вход в аккаунт
+// вход в аккаунт
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -126,9 +126,9 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 
-// ================= МАРШРУТЫ ПРОФИЛЯ И СМС =================
+// маршруты профиля и смс-кодов
 
-// 1. Запрос смс-кода для подтверждения телефона в личном кабинете
+// 1. запрос смс-кода для подтверждения телефона в личном кабинете
 app.post('/api/users/send-phone-code', async (req, res) => {
   try {
     const { phone, userId } = req.body;
@@ -137,35 +137,35 @@ app.post('/api/users/send-phone-code', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Номер телефона и ID пользователя обязательны' });
     }
 
-    // 1. Генерируем случайный 4-значный код
+    // 1. генерируеися случайный 4-значный код
     const code = Math.floor(1000 + Math.random() * 9000).toString();
 
-    // 2. Сохраняем код в базу данных (с указанием назначения verify_phone)
-    // Удаляем старые коды для этого номера, чтобы не копить мусор
+    // 2. сохраняется код в базу данных (с указанием назначения verify_phone)
+    // удаляются старые коды для этого номера, чтобы не копить мусор
     await SmsCode.deleteMany({ phone, purpose: 'verify_phone' });
     
     const smsDoc = new SmsCode({
       phone,
       code,
       purpose: 'verify_phone',
-      createdAt: new Date() // Убедись, что в схеме настроен TTL (время жизни) кодов
+      createdAt: new Date()
     });
     await smsDoc.save();
 
-    // 3. Форматируем номер телефона (SMS.ru просит чистые цифры без плюсов, например: 79991112233)
+    // 3. форматируется номер телефона (SMS.ru просит чистые цифры без плюсов, например: 79991112233)
     const cleanPhone = phone.replace(/\D/g, '');
 
-    // Твой API-ключ от SMS.ru (замени на свой реальный из личного кабинета)
+    // API-ключ от SMS.ru
     const SMS_RU_API_ID = process.env.SMS_RU_API_ID; 
     
     const smsMessage = encodeURIComponent(`Код подтверждения профиля: ${code}`);
     const smsUrl = `https://sms.ru/sms/send?api_id=${SMS_RU_API_ID}&to=${cleanPhone}&msg=${smsMessage}&json=1`;
 
-    // 4. Делаем физический запрос к SMS-шлюзу
+    // 4. физический запрос к SMS-шлюзу
     const smsResponse = await fetch(smsUrl);
     const smsData = await smsResponse.json();
 
-    // Проверяем статус ответа от SMS.ru
+    //  статус ответа от SMS.ru
     if (smsData.status === "OK" && smsData.sms[cleanPhone] && smsData.sms[cleanPhone].status === "OK") {
       console.log(`SMS успешно отправлено на номер ${cleanPhone}. Код: ${code}`);
       return res.json({ success: true, message: 'Код подтверждения успешно отправлен в SMS' });
@@ -183,7 +183,7 @@ app.post('/api/users/send-phone-code', async (req, res) => {
   }
 });
 
-// 2. Обновление профиля (совместимый с фронтендом PUT маршрут)
+// 2. обновление профиля (совместимый с фронтендом PUT маршрут)
 app.put('/api/users/profile/:id', async (req, res) => {
   try {
     const userId = req.params.id;
@@ -194,18 +194,18 @@ app.put('/api/users/profile/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'пользователь не найден' });
     }
 
-    // Независимая обработка номера телефона
+    // независимая обработка номера телефона
     if (phone !== undefined && phone !== user.phone) {
       user.phone = phone;
       user.isPhoneVerified = false; 
     }
 
-    // Независимое сохранение остальных полей
+    // независимое сохранение остальных полей
     if (name !== undefined) user.name = name;
     if (whatsapp !== undefined) user.whatsapp = whatsapp;
     if (telegram !== undefined) user.telegram = telegram;
     if (bio !== undefined) user.bio = bio;
-    if (avatar !== undefined) user.avatar = avatar; // Сохраняем строку Base64 напрямую в базу
+    if (avatar !== undefined) user.avatar = avatar; // Сохранение строку Base64 напрямую в базу
 
     await user.save();
 
@@ -230,18 +230,18 @@ app.put('/api/users/profile/:id', async (req, res) => {
   }
 });
 
-// Маршрут для редактирования питомца
+// маршрут для редактирования питомца
 app.put('/api/pets/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    // Данные приходят из вашего fetch (body: JSON.stringify(payload))
+    // данные приходят из fetch (body: JSON.stringify(payload))
     const { name, breed, description, status, image, lat, lng } = req.body;
 
-    // Ищем и обновляем
+    // поиск и обновление питомца по ID
     const updatedPet = await Pet.findByIdAndUpdate(
       id, 
       { name, breed, description, status, image, lat, lng },
-      { new: true } // Эта опция возвращает уже обновленный объект
+      { new: true } // эта опция возвращает уже обновленный объект
     );
 
     if (!updatedPet) {
@@ -255,7 +255,7 @@ app.put('/api/pets/:id', async (req, res) => {
   }
 });
 
-// НОВЫЙ МАРШРУТ: ОТДЕЛЬНАЯ ПРОВЕРКА СМС ДЛЯ ПОДТВЕРЖДЕНИЯ НОМЕРА
+// отдельная проверка смс-кода для подтверждения телефона
 app.post('/api/users/verify-phone-code', async (req, res) => {
   try {
     const { userId, phone, code } = req.body;
@@ -269,7 +269,7 @@ app.post('/api/users/verify-phone-code', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Неверный или просроченный код подтверждения' });
     }
 
-    // Если код верный, находим пользователя и подтверждаем ему номер
+    // если код верный, находим пользователя и подтверждаем ему номер
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'Пользователь не найден' });
@@ -279,7 +279,7 @@ app.post('/api/users/verify-phone-code', async (req, res) => {
     user.isPhoneVerified = true;
     await user.save();
 
-    // Удаляем использованный код
+    // удаление использованного код
     await SmsCode.deleteOne({ _id: validCode._id });
 
     res.json({
@@ -325,7 +325,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 });
 
 
-// ================= МАРШРУТЫ ОБЪЯВЛЕНИЙ =================
+// маршруты обновления и получения объявлений о питомцах
 
 app.get('/api/pets', async (req, res) => {
   try {
@@ -364,7 +364,7 @@ app.delete('/api/pets/:id', async (req, res) => {
   }
 });
 
-// Получение публичной карточки пользователя со всеми его соцсетями и объявлениями
+// получение публичной карточки пользователя со всеми его соцсетями и объявлениями
 app.get('/api/users/:id', async (req, res) => {
   try {
     const user = await User.findById(req.params.id).select('-password');
