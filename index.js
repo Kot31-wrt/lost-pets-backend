@@ -6,6 +6,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import axios from 'axios'; 
 
+const Pet = require('./models/Pet');
 const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'SUPER_SECRET_KEY_123'; // секретный ключ для подписи токенов
@@ -229,33 +230,28 @@ app.put('/api/users/profile/:id', async (req, res) => {
   }
 });
 
-// ОБНОВЛЕНИЕ ПИТОМЦА
+// Маршрут для редактирования питомца
 app.put('/api/pets/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    // Данные приходят из вашего fetch (body: JSON.stringify(payload))
     const { name, breed, description, status, image, lat, lng } = req.body;
 
-    // Ищем питомца в базе данных
-    const pet = await Pet.findById(id);
-    if (!pet) {
+    // Ищем и обновляем
+    const updatedPet = await Pet.findByIdAndUpdate(
+      id, 
+      { name, breed, description, status, image, lat, lng },
+      { new: true } // Эта опция возвращает уже обновленный объект
+    );
+
+    if (!updatedPet) {
       return res.status(404).json({ success: false, message: 'Питомец не найден' });
     }
 
-    // Обновляем поля
-    pet.name = name;
-    pet.breed = breed;
-    pet.description = description;
-    pet.status = status;
-    pet.image = image;
-    pet.lat = lat;
-    pet.lng = lng;
-
-    await pet.save();
-
-    res.json({ success: true, message: 'Данные успешно обновлены' });
+    res.json({ success: true, data: updatedPet });
   } catch (error) {
-    console.error("Ошибка при обновлении:", error);
-    res.status(500).json({ success: false, message: 'Ошибка сервера' });
+    console.error("Ошибка при обновлении питомца:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
