@@ -172,18 +172,18 @@ app.put('/api/users/profile/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'пользователь не найден' });
     }
 
-    // Если пользователь ввел новый номер, который отличается от старого в базе,
-    // сбрасываем флаг верификации в false, так как этот новый номер еще не подтвержден
+    // Независимая обработка номера телефона
     if (phone !== undefined && phone !== user.phone) {
       user.phone = phone;
       user.isPhoneVerified = false; 
     }
 
-    user.name = name || user.name;
-    user.whatsapp = whatsapp !== undefined ? whatsapp : user.whatsapp;
-    user.telegram = telegram !== undefined ? telegram : user.telegram;
-    user.bio = bio !== undefined ? bio : user.bio;
-    user.avatar = avatar !== undefined ? avatar : user.avatar;
+    // Независимое сохранение остальных полей
+    if (name !== undefined) user.name = name;
+    if (whatsapp !== undefined) user.whatsapp = whatsapp;
+    if (telegram !== undefined) user.telegram = telegram;
+    if (bio !== undefined) user.bio = bio;
+    if (avatar !== undefined) user.avatar = avatar; // Сохраняем строку Base64 напрямую в базу
 
     await user.save();
 
