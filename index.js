@@ -229,6 +229,36 @@ app.put('/api/users/profile/:id', async (req, res) => {
   }
 });
 
+// ОБНОВЛЕНИЕ ПИТОМЦА
+app.put('/api/pets/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, breed, description, status, image, lat, lng } = req.body;
+
+    // Ищем питомца в базе данных
+    const pet = await Pet.findById(id);
+    if (!pet) {
+      return res.status(404).json({ success: false, message: 'Питомец не найден' });
+    }
+
+    // Обновляем поля
+    pet.name = name;
+    pet.breed = breed;
+    pet.description = description;
+    pet.status = status;
+    pet.image = image;
+    pet.lat = lat;
+    pet.lng = lng;
+
+    await pet.save();
+
+    res.json({ success: true, message: 'Данные успешно обновлены' });
+  } catch (error) {
+    console.error("Ошибка при обновлении:", error);
+    res.status(500).json({ success: false, message: 'Ошибка сервера' });
+  }
+});
+
 // НОВЫЙ МАРШРУТ: ОТДЕЛЬНАЯ ПРОВЕРКА СМС ДЛЯ ПОДТВЕРЖДЕНИЯ НОМЕРА
 app.post('/api/users/verify-phone-code', async (req, res) => {
   try {
