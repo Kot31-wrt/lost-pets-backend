@@ -133,31 +133,52 @@ app.post('/api/users/send-phone-code', async (req, res) => {
     const { phone, userId } = req.body;
 
     if (!phone || !userId) {
-      return res.status(400).json({ success: false, message: 'номер телефона и id пользователя обязательны' });
+      return res.status(400).json({ success: false, message: 'Номер телефона и ID пользователя обязательны' });
     }
 
-    const existingUser = await User.findOne({ phone, _id: { $ne: userId } });
-    if (existingUser) {
-      return res.status(400).json({ success: false, message: 'этот номер телефона уже привязан к другому аккаунту' });
-    }
-
+    // 1. Генерируем случайный 4-значный код
     const code = Math.floor(1000 + Math.random() * 9000).toString();
 
+    // 2. Сохраняем код в базу данных (с указанием назначения verify_phone)
+    // Удаляем старые коды для этого номера, чтобы не копить мусор
     await SmsCode.deleteMany({ phone, purpose: 'verify_phone' });
-    await SmsCode.create({ phone, code, purpose: 'verify_phone' });
+    
+    const smsDoc = new SmsCode({
+      phone,
+      code,
+      purpose: 'verify_phone',
+      createdAt: new Date() // Убедись, что в схеме настроен TTL (время жизни) кодов
+    });
+    await smsDoc.save();
 
-    const smsUrl = `https://sms.ru/sms/send?api_id=${process.env.SMS_RU_API_ID}&to=${phone}&msg=${encodeURIComponent(`код подтверждения профиля: ${code}`)}&json=1`;
-    const response = await axios.get(smsUrl);
+    // 3. Форматируем номер телефона (SMS.ru просит чистые цифры без плюсов, например: 79991112233)
+    const cleanPhone = phone.replace(/\D/g, '');
 
-    if (response.data && response.data.status === "OK") {
-      res.json({ success: true, message: 'смс-код успешно отправлен' });
+    // Твой API-ключ от SMS.ru (замени на свой реальный из личного кабинета)
+    const SMS_RU_API_ID = process.env.SMS_RU_API_ID; 
+    
+    const smsMessage = encodeURIComponent(`Код подтверждения профиля: ${code}`);
+    const smsUrl = `https://sms.ru/sms/send?api_id=${SMS_RU_API_ID}&to=${cleanPhone}&msg=${smsMessage}&json=1`;
+
+    // 4. Делаем физический запрос к SMS-шлюзу
+    const smsResponse = await fetch(smsUrl);
+    const smsData = await smsResponse.json();
+
+    // Проверяем статус ответа от SMS.ru
+    if (smsData.status === "OK" && smsData.sms[cleanPhone] && smsData.sms[cleanPhone].status === "OK") {
+      console.log(`SMS успешно отправлено на номер ${cleanPhone}. Код: ${code}`);
+      return res.json({ success: true, message: 'Код подтверждения успешно отправлен в SMS' });
     } else {
-      console.log(`[режим тестирования] смс не отправлено, код для ${phone}: ${code}`);
-      res.json({ success: true, message: 'код сгенерирован (тест-режим)', testCode: code });
+      console.error('Ошибка ответа от SMS.ru:', smsData);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'SMS-шлюз отклонил отправку. Проверьте баланс или корректность номера телефона' 
+      });
     }
+
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ success: false, message: 'ошибка при отправке смс' });
+    console.error('Ошибка при отправке SMS:', error);
+    res.status(500).json({ success: false, message: 'Внутренняя ошибка сервера при отправке SMS' });
   }
 });
 
